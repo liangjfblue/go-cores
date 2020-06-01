@@ -18,6 +18,10 @@ var (
 	ErrCapRateLessZero = errors.New("cap/rate less zero")
 )
 
+var (
+	maxTimeOut = 0x7fffffffffffffff
+)
+
 /**
 令牌桶算法:
 令牌桶算法的原理是系统会以一个恒定的速度往桶里放入令牌，而如果请求需要被处理，则需要先从桶里获取一个令牌，当桶里没有令牌可取时，则拒绝服务。 当桶满时，新添加的令牌被丢弃或拒绝。
@@ -52,11 +56,15 @@ func New(cap, rate int) ratelimit.IRateLimit {
 		l.bucket <- struct{}{}
 	}
 
+	if err := l.limiter(); err != nil {
+		panic(err)
+	}
+
 	return l
 }
 
-//开始限流
-func (l *tokenRateLimit) Limiter() error {
+//limiter 开始限流
+func (l *tokenRateLimit) limiter() error {
 	if !l.validate() {
 		return ErrCapRateLessZero
 	}
@@ -67,8 +75,53 @@ func (l *tokenRateLimit) Limiter() error {
 	return nil
 }
 
-//Take 阻塞等待资源, 支持超时控制
-func (l *tokenRateLimit) Take(timeout time.Duration) bool {
+//Wait 阻塞等待资源
+func (l *tokenRateLimit) Wait() bool {
+	return l.take(time.Duration(maxTimeOut))
+}
+
+//WaitWithTimeout 阻塞等待资源, 支持超时控制
+func (l *tokenRateLimit) WaitWithTimeout(timeout time.Duration) bool {
+	l.Lock()
+	defer l.Unlock()
+	return l.take(timeout)
+}
+
+//TryWait 非阻塞获取资源
+func (l *tokenRateLimit) TryWait() bool {
+	l.Lock()
+	defer l.Unlock()
+	return l.takeAvailable()
+}
+
+//SetRate 控制速率
+func (l *tokenRateLimit) SetRate(rate int) {
+	l.Lock()
+	defer l.Unlock()
+	l.rate = rate
+}
+
+//GetToken 获取令牌数量
+func (l *tokenRateLimit) GetToken() int {
+	l.RLock()
+	defer l.RUnlock()
+	return len(l.bucket)
+}
+
+//Stop 停止
+func (l *tokenRateLimit) Stop() {
+	if len(l.stop) > 0 {
+		return
+	}
+	l.stop <- struct{}{}
+}
+
+//take 阻塞等待资源, 支持超时控制
+func (l *tokenRateLimit) take(timeout time.Duration) bool {
+	if timeout < 0 {
+		timeout = 0
+	}
+
 	t := time.After(timeout)
 	for {
 		select {
@@ -80,29 +133,14 @@ func (l *tokenRateLimit) Take(timeout time.Duration) bool {
 	}
 }
 
-//TryTake 非阻塞获取资源
-func (l *tokenRateLimit) TryTake() bool {
-	l.RLock()
+//takeAvailable 非阻塞获取资源内部函数
+func (l *tokenRateLimit) takeAvailable() bool {
 	if len(l.bucket) <= 0 {
-		l.RUnlock()
 		return false
 	}
-	l.RUnlock()
 
 	<-l.bucket
 	return true
-}
-
-//SetRate 控制速率
-func (l *tokenRateLimit) SetRate(rate int) {
-	l.rate = rate
-}
-
-//获取令牌数量
-func (l *tokenRateLimit) GetToken() int {
-	l.RLock()
-	defer l.RUnlock()
-	return len(l.bucket)
 }
 
 //validate 检查参数
