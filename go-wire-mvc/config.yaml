@@ -1,0 +1,11 @@
+server:
+  port: 9099
+  runmode: debug
+
+mysql:
+  addr: 127.0.0.1:3306
+  db: db_wire_mvc
+  user: root
+  password: root
+  maxIdleCons: 10
+  maxOpenCons: 100
